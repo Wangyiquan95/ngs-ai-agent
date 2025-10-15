@@ -20,7 +20,11 @@ conda activate ai-ngs
 pip install ngs-ai-agent
 
 # 3. Run analysis with your data
+## add config/config.yaml to your current dir before run:
 ngs-ai-agent run --input-dir /path/to/fastq/files --metadata experiment.csv --dry-run
+
+## real example:
+ngs-ai-agent run --input-dir results/H5_entry/data/ --reference results/H5_entry/ref/PacBio_amplicon.gb --metadata results/H5_entry/data/SRA_metadata_H5_entry.xlsx --outdir results/H5_entry --cores 32 --dry-run
 ```
 
 ## ✨ Features
