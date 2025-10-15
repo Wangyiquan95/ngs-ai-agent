@@ -24,13 +24,13 @@ def read_requirements():
 
 setup(
     name="ngs-ai-agent",
-    version="1.1.0",
-    author="NGS AI Agent Team",
+    version="1.1.1",
+    author="Wang, Yiquan",
     author_email="contact@ngs-ai-agent.com",
     description="AI-powered automated NGS analysis pipeline",
     long_description=read_readme(),
     long_description_content_type="text/markdown",
-    url="https://github.com/your-org/ngs-ai-agent",
+    url="https://github.com/Wangyiquan95/ngs-ai-agent",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     classifiers=[
@@ -73,8 +73,8 @@ setup(
     zip_safe=False,
     keywords="ngs, bioinformatics, ai, genomics, sequencing, pipeline",
     project_urls={
-        "Bug Reports": "https://github.com/your-org/ngs-ai-agent/issues",
-        "Source": "https://github.com/your-org/ngs-ai-agent",
+        "Bug Reports": "https://github.com/Wangyiquan95/ngs-ai-agent/issues",
+        "Source": "https://github.com/Wangyiquan95/ngs-ai-agent",
         "Documentation": "https://ngs-ai-agent.readthedocs.io/",
     },
 )

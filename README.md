@@ -3,6 +3,7 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PyPI version](https://badge.fury.io/py/ngs-ai-agent.svg)](https://badge.fury.io/py/ngs-ai-agent)
+[![GitHub](https://img.shields.io/github/stars/Wangyiquan95/ngs-ai-agent?style=social)](https://github.com/Wangyiquan95/ngs-ai-agent)
 
 **AI-powered automated NGS analysis pipeline for Deep Mutational Scanning (DMS) experiments**
 
@@ -64,7 +65,7 @@ ngs-ai-agent run --input-dir /path/to/fastq/files --metadata experiment.csv --dr
 
 2. **Clone the Repository**:
 ```bash
-git clone https://github.com/your-org/ngs-ai-agent.git
+git clone https://github.com/Wangyiquan95/ngs-ai-agent.git
 cd ngs-ai-agent
 ```
 
@@ -313,7 +314,7 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 ### Development Setup
 ```bash
 # Clone repository
-git clone https://github.com/your-org/ngs-ai-agent.git
+git clone https://github.com/Wangyiquan95/ngs-ai-agent.git
 cd ngs-ai-agent
 
 # Create conda environment
@@ -341,9 +342,9 @@ If you use NGS AI Agent in your research, please cite:
 ```bibtex
 @software{ngs_ai_agent,
   title={NGS AI Agent: AI-powered automated NGS analysis pipeline},
-  author={NGS AI Agent Team},
+  author={Wang, Yiquan},
   year={2024},
-  url={https://github.com/your-org/ngs-ai-agent},
+  url={https://github.com/Wangyiquan95/ngs-ai-agent},
   license={MIT}
 }
 ```
@@ -352,8 +353,8 @@ If you use NGS AI Agent in your research, please cite:
 
 - **Documentation**: [https://ngs-ai-agent.readthedocs.io/](https://ngs-ai-agent.readthedocs.io/)
 - **PyPI Package**: [https://pypi.org/project/ngs-ai-agent/](https://pypi.org/project/ngs-ai-agent/)
-- **GitHub Repository**: [https://github.com/your-org/ngs-ai-agent](https://github.com/your-org/ngs-ai-agent)
-- **Issue Tracker**: [https://github.com/your-org/ngs-ai-agent/issues](https://github.com/your-org/ngs-ai-agent/issues)
+- **GitHub Repository**: [https://github.com/Wangyiquan95/ngs-ai-agent](https://github.com/Wangyiquan95/ngs-ai-agent)
+- **Issue Tracker**: [https://github.com/Wangyiquan95/ngs-ai-agent/issues](https://github.com/Wangyiquan95/ngs-ai-agent/issues)
 
 ## 🙏 Acknowledgments
 
