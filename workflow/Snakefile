@@ -1,0 +1,268 @@
+"""
+NGS AI Agent - Main Snakemake Pipeline
+Deep Mutational Scanning Analysis Pipeline
+"""
+
+import os
+import yaml
+import logging
+from pathlib import Path
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load configuration
+configfile: "config/config.yaml"
+
+# Import AI orchestrator
+import sys
+sys.path.append("src")
+from ai_orchestrator.ollama_client import OllamaOrchestrator
+
+# Initialize AI orchestrator
+ai_orchestrator = OllamaOrchestrator()
+
+# Get input files
+RAW_DATA_DIR = config["data"]["raw"]
+RESULTS_DIR = config["data"]["results"]
+
+# Auto-detect input files for metadata matching
+# Priority: 1) Command line input dir, 2) data/raw (if cleaned files exist), 3) fallback to data/test
+FASTQ_FILES = []
+
+# Check if we have a command line input directory (passed via config)
+input_dir = config.get("input_directory")
+if input_dir and os.path.exists(input_dir):
+    # Use the directory specified by the user
+    FASTQ_FILES = [str(f) for f in Path(input_dir).glob("*.fastq.gz")]
+    logger.info(f"Using user-specified input directory: {input_dir}")
+elif os.path.exists(RAW_DATA_DIR):
+    # Check if data/raw has cleaned symlinks (production mode)
+    raw_files = list(Path(RAW_DATA_DIR).glob("*.fastq.gz"))
+    if raw_files and any("DMS_" in f.name for f in raw_files):
+        # We have cleaned symlinks, use the original files they point to
+        FASTQ_FILES = []
+        for symlink in raw_files:
+            if symlink.is_symlink():
+                try:
+                    original_file = symlink.resolve()
+                    if original_file.exists():
+                        FASTQ_FILES.append(str(original_file))
+                except:
+                    pass
+        if FASTQ_FILES:
+            logger.info(f"Using original files from cleaned symlinks in {RAW_DATA_DIR}")
+    else:
+        # No cleaned symlinks, use raw files directly
+        FASTQ_FILES = [str(f) for f in raw_files]
+        logger.info(f"Using files directly from {RAW_DATA_DIR}")
+elif os.path.exists("data/test"):
+    # Fallback to test data (development mode)
+    FASTQ_FILES = [str(f) for f in Path("data/test").glob("*.fastq.gz")]
+    logger.info("Using test data directory (development mode)")
+else:
+    logger.warning("No input files found in any expected location")
+
+# Use AI to configure pipeline if files are found
+if FASTQ_FILES:
+    # Try to use metadata-driven configuration first
+    try:
+        # Check if metadata file was passed via command line
+        metadata_file = config.get("metadata_file")
+        
+        if not metadata_file:
+            # Look for metadata file in common locations as fallback
+            metadata_candidates = [
+                "config/experiment_metadata_example.csv",
+                "my_experiment.csv",
+                "experiment.csv"
+            ]
+            
+            for candidate in metadata_candidates:
+                if os.path.exists(candidate):
+                    metadata_file = candidate
+                    break
+        
+        if metadata_file:
+            logger.info(f"Using metadata file: {metadata_file}")
+            PIPELINE_CONFIG = ai_orchestrator.configure_pipeline_from_table(FASTQ_FILES, metadata_file)
+            # Create a proper file mapping for Snakemake
+            SAMPLES = {}
+            SAMPLE_FILES = {}  # For single-end files
+            PAIRED_FILES = {}  # For paired-end files
+            
+            # Use the conditions from the AI-generated pipeline config
+            for condition, replicates in PIPELINE_CONFIG.get("conditions", {}).items():
+                for rep_num, rep_data in replicates.items():
+                    # Create sample key that matches the expected format
+                    sample_key = f"DMS_{condition}_rep{rep_num}"
+                    
+                    if rep_data["files"]:
+                        # Check if this is paired-end
+                        if len(rep_data["files"]) >= 2:
+                            # Paired-end: find R1 and R2 files
+                            r1_file = None
+                            r2_file = None
+                            for file_path in rep_data["files"]:
+                                if "_R1" in file_path or "R1_001" in file_path:
+                                    r1_file = file_path
+                                elif "_R2" in file_path or "R2_001" in file_path:
+                                    r2_file = file_path
+                            
+                            if r1_file and r2_file:
+                                PAIRED_FILES[sample_key] = {"r1": r1_file, "r2": r2_file}
+                                SAMPLES[sample_key] = r1_file  # Use R1 as primary for compatibility
+                                logger.info(f"Paired sample {sample_key}: R1={os.path.basename(r1_file)}, R2={os.path.basename(r2_file)}")
+                        else:
+                            # Single-end
+                            SAMPLE_FILES[sample_key] = rep_data["files"][0]
+                            SAMPLES[sample_key] = rep_data["files"][0]
+                            logger.info(f"Single-end sample {sample_key}: {os.path.basename(rep_data['files'][0])}")
+        else:
+            logger.error("No metadata file found. Metadata is required for this pipeline.")
+            raise ValueError("Metadata file is required but not found")
+    except Exception as e:
+        logger.error(f"Metadata configuration failed: {e}")
+        raise ValueError(f"Failed to configure pipeline with metadata: {e}")
+    
+    IS_PAIRED = PIPELINE_CONFIG.get("is_paired_end", False)
+    DMS_PIPELINE_TYPE = PIPELINE_CONFIG.get("dms_pipeline_type", "direct_amplicon")
+    
+    # Set up sample groups based on pipeline type
+    if DMS_PIPELINE_TYPE == "barcode_coupled":
+        # For barcode-coupled DMS, separate long-read and short-read samples
+        LONG_READ_SAMPLES = {}
+        SHORT_READ_SAMPLES = {}
+        MAPPING_SAMPLES = {}
+        
+        for condition, replicates in PIPELINE_CONFIG.get("conditions", {}).items():
+            for rep_num, rep_data in replicates.items():
+                sample_key = f"DMS_{condition}_rep{rep_num}"
+                
+                if sample_key in SAMPLES:
+                    file_path = SAMPLES[sample_key]
+                    
+                    if condition == "mapping":
+                        # Long-read samples for barcode→variant mapping
+                        LONG_READ_SAMPLES[sample_key] = file_path
+                        MAPPING_SAMPLES[sample_key] = file_path
+                    else:
+                        # Short-read samples for barcode counting
+                        SHORT_READ_SAMPLES[sample_key] = file_path
+    else:
+        # For direct amplicon DMS, all samples are treated the same
+        LONG_READ_SAMPLES = {}
+        SHORT_READ_SAMPLES = SAMPLES
+        MAPPING_SAMPLES = {}
+    
+    # Identify input and output samples for fitness calculation (only from short-read samples)
+    input_condition = PIPELINE_CONFIG['fitness_calculation']['input_condition']
+    output_conditions = PIPELINE_CONFIG['fitness_calculation']['output_conditions']
+    
+    if DMS_PIPELINE_TYPE == "barcode_coupled":
+        # For barcode-coupled, only use short-read samples for fitness calculation
+        INPUT_SAMPLES = [sample for sample in SHORT_READ_SAMPLES.keys() if input_condition in sample]
+        OUTPUT_SAMPLES = [sample for sample in SHORT_READ_SAMPLES.keys() if any(oc in sample for oc in output_conditions)]
+    else:
+        # For direct amplicon, use all samples
+        INPUT_SAMPLES = [sample for sample in SAMPLES.keys() if input_condition in sample]
+        OUTPUT_SAMPLES = [sample for sample in SAMPLES.keys() if any(oc in sample for oc in output_conditions)]
+    
+    # Debug output
+    logger.info(f"Pipeline configuration loaded:")
+    logger.info(f"  - Found {len(FASTQ_FILES)} FASTQ files")
+    logger.info(f"  - DMS Pipeline Type: {DMS_PIPELINE_TYPE}")
+    logger.info(f"  - SAMPLES: {list(SAMPLES.keys())}")
+    logger.info(f"  - SAMPLE_FILES: {list(SAMPLE_FILES.keys())}")
+    logger.info(f"  - PAIRED_FILES: {list(PAIRED_FILES.keys())}")
+    logger.info(f"  - IS_PAIRED: {IS_PAIRED}")
+    if DMS_PIPELINE_TYPE == "barcode_coupled":
+        logger.info(f"  - MAPPING_SAMPLES (long-read): {list(MAPPING_SAMPLES.keys())}")
+        logger.info(f"  - SHORT_READ_SAMPLES: {list(SHORT_READ_SAMPLES.keys())}")
+    logger.info(f"  - INPUT_SAMPLES: {INPUT_SAMPLES}")
+    logger.info(f"  - OUTPUT_SAMPLES: {OUTPUT_SAMPLES}")
+    
+    # Show file mappings
+    for sample, file_path in SAMPLES.items():
+        logger.info(f"    {sample} -> {file_path}")
+    
+    for sample, paired_info in PAIRED_FILES.items():
+        logger.info(f"    {sample} -> R1: {paired_info['r1']}, R2: {paired_info['r2']}")
+else:
+    SAMPLES = {}
+    SAMPLE_FILES = {}
+    PAIRED_FILES = {}
+    IS_PAIRED = False
+    DMS_PIPELINE_TYPE = "direct_amplicon"
+    LONG_READ_SAMPLES = {}
+    SHORT_READ_SAMPLES = {}
+    MAPPING_SAMPLES = {}
+    INPUT_SAMPLES = []
+    OUTPUT_SAMPLES = []
+
+# Include common rules (used by both pipeline types)
+include: "rules/qc.smk"
+include: "rules/trimming.smk"
+
+# Include pipeline-specific rules based on DMS type
+if DMS_PIPELINE_TYPE == "barcode_coupled":
+    include: "rules/barcode_dms.smk"
+else:
+    include: "rules/mapping.smk"
+    include: "rules/direct_amplicon_dms.smk"
+
+# Include common visualization and reporting rules
+include: "rules/visualization.smk"
+
+def _get_pipeline_specific_outputs():
+    """Get pipeline-specific output files based on DMS type"""
+    if not SAMPLES:
+        return []
+    
+    if DMS_PIPELINE_TYPE == "barcode_coupled":
+        return [
+            # Barcode-coupled specific outputs
+            "resources/barcode_reference_cleaned.fasta",
+            expand(f"{RESULTS_DIR}/barcode_mapping/{{sample}}_aligned.bam", sample=MAPPING_SAMPLES.keys()),
+            expand(f"{RESULTS_DIR}/barcode_mapping/{{sample}}_aligned.bam.bai", sample=MAPPING_SAMPLES.keys()),
+            f"{RESULTS_DIR}/barcode_mapping/barcode_variant_map.csv",
+            expand(f"{RESULTS_DIR}/barcode_counts/{{sample}}_barcode_counts.csv", sample=SHORT_READ_SAMPLES.keys()),
+            f"{RESULTS_DIR}/qc/barcode_qc_report.html"
+        ]
+    else:
+        return [
+            # Direct amplicon specific outputs
+            expand(f"{RESULTS_DIR}/mapped/{{sample}}.bam", sample=SAMPLES.keys()),
+            expand(f"{RESULTS_DIR}/variants/{{sample}}_variants.vcf", sample=SAMPLES.keys()),
+            expand(f"{RESULTS_DIR}/variants/{{sample}}_variants_counts.csv", sample=SAMPLES.keys()),
+            f"{RESULTS_DIR}/dms/annotated_variants.csv"
+        ]
+
+# Target rule - dynamically set based on pipeline type
+rule all:
+    input:
+        # Common outputs for both pipeline types
+        expand(f"{RESULTS_DIR}/qc/fastqc/{{sample}}_fastqc.html", sample=SAMPLES.keys()) if SAMPLES else [],
+        # Trimmed reads - handle both single and paired-end
+        expand(f"{RESULTS_DIR}/trimmed/{{sample}}_trimmed.fastq.gz", sample=SAMPLE_FILES.keys()) if SAMPLE_FILES else [],
+        expand(f"{RESULTS_DIR}/trimmed/{{sample}}_R1_trimmed.fastq.gz", sample=PAIRED_FILES.keys()) if PAIRED_FILES else [],
+        expand(f"{RESULTS_DIR}/trimmed/{{sample}}_R2_trimmed.fastq.gz", sample=PAIRED_FILES.keys()) if PAIRED_FILES else [],
+        # Pipeline-specific outputs
+        _get_pipeline_specific_outputs(),
+        # Common final outputs
+        f"{RESULTS_DIR}/dms/fitness_scores.csv" if SAMPLES else [],
+        f"{RESULTS_DIR}/visualization/dms_heatmap.png" if SAMPLES else [],
+        f"{RESULTS_DIR}/reports/final_report.html" if SAMPLES else []
+
+# AI initialization rule removed - metadata is always required and handled in main agent
+
+# Rule for final AI report generation
+rule ai_report:
+    input:
+        fitness_scores=lambda wildcards: f"{RESULTS_DIR}/dms/fitness_scores.csv" if DMS_PIPELINE_TYPE == "barcode_coupled" else f"{RESULTS_DIR}/dms/annotated_variants.csv",
+        heatmap=f"{RESULTS_DIR}/visualization/dms_heatmap.png"
+    output:
+        report=f"{RESULTS_DIR}/reports/final_report.html"
+    script:
+        "scripts/generate_ai_report.py"
